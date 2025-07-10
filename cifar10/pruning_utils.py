@@ -245,6 +245,16 @@ class SpikeMapPruner:
                         if old_fc1.bias is not None:
                             new_fc1.bias.copy_(old_fc1.bias[keep_indices])
                     module.fc1_linear = new_fc1
+                    # 重建 fc1_bn（如果有）
+                    if hasattr(module, 'fc1_bn') and module.fc1_bn is not None:
+                        old_bn = module.fc1_bn
+                        new_bn = nn.BatchNorm1d(len(keep_indices)).to(old_bn.weight.device)
+                        with torch.no_grad():
+                            new_bn.weight.copy_(old_bn.weight[keep_indices])
+                            new_bn.bias.copy_(old_bn.bias[keep_indices])
+                            new_bn.running_mean.copy_(old_bn.running_mean[keep_indices])
+                            new_bn.running_var.copy_(old_bn.running_var[keep_indices])
+                        module.fc1_bn = new_bn
                     # 重建 fc2_linear
                     old_fc2 = module.fc2_linear
                     new_fc2 = nn.Linear(len(keep_indices), old_fc2.out_features, bias=old_fc2.bias is not None).to(old_fc2.weight.device)
@@ -253,6 +263,16 @@ class SpikeMapPruner:
                         if old_fc2.bias is not None:
                             new_fc2.bias.copy_(old_fc2.bias)
                     module.fc2_linear = new_fc2
+                    # 重建 fc2_bn（如果有）
+                    if hasattr(module, 'fc2_bn') and module.fc2_bn is not None:
+                        old_bn2 = module.fc2_bn
+                        new_bn2 = nn.BatchNorm1d(old_fc2.out_features).to(old_bn2.weight.device)
+                        with torch.no_grad():
+                            new_bn2.weight.copy_(old_bn2.weight)
+                            new_bn2.bias.copy_(old_bn2.bias)
+                            new_bn2.running_mean.copy_(old_bn2.running_mean)
+                            new_bn2.running_var.copy_(old_bn2.running_var)
+                        module.fc2_bn = new_bn2
                     # 更新 c_hidden
                     module.c_hidden = len(keep_indices)
             # SSA block（可依需求擴充）
