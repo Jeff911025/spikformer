@@ -40,6 +40,7 @@ from timm.optim import create_optimizer_v2, optimizer_kwargs
 from timm.scheduler import create_scheduler
 from timm.utils import ApexScaler, NativeScaler
 import model
+from pruning_utils import SpikeMapPruner, create_pruning_scheduler
 try:
     from apex import amp
     from apex.parallel import DistributedDataParallel as ApexDDP
@@ -182,6 +183,16 @@ parser.add_argument('--patience-epochs', type=int, default=10, metavar='N',
                     help='patience epochs for Plateau LR scheduler (default: 10')
 parser.add_argument('--decay-rate', '--dr', type=float, default=0.1, metavar='RATE',
                     help='LR decay rate (default: 0.1)')
+
+# Pruning parameters
+parser.add_argument('--enable-pruning', action='store_true', default=False,
+                    help='Enable spike map based pruning')
+parser.add_argument('--pruning-ratio', type=float, default=0.3, metavar='RATIO',
+                    help='Pruning ratio (default: 0.3)')
+parser.add_argument('--pruning-epochs', type=int, default=50, metavar='N',
+                    help='Number of epochs to apply pruning (default: 50)')
+parser.add_argument('--pruning-interval', type=int, default=10, metavar='N',
+                    help='Interval between pruning evaluations (default: 10)')
 
 # Augmentation & regularization parameters
 parser.add_argument('--no-aug', action='store_true', default=False,
@@ -600,10 +611,62 @@ def main():
         with open(os.path.join(output_dir, 'args.yaml'), 'w') as f:
             f.write(args_text)
 
+    # setup pruning if enabled
+    pruner = None
+    pruning_scheduler = None
+    if args.enable_pruning:
+        pruner = SpikeMapPruner(model, pruning_ratio=args.pruning_ratio)
+        pruning_scheduler = create_pruning_scheduler(
+            initial_ratio=0.1, 
+            final_ratio=args.pruning_ratio, 
+            epochs=num_epochs
+        )
+        if args.local_rank == 0:
+            _logger.info(f'Pruning enabled with ratio: {args.pruning_ratio}')
+
     try:
         for epoch in range(start_epoch, num_epochs):
             if args.distributed and hasattr(loader_train.sampler, 'set_epoch'):
                 loader_train.sampler.set_epoch(epoch)
+
+            # Apply pruning if enabled and at the right interval
+            if (args.enable_pruning and pruner is not None and 
+                epoch >= args.pruning_epochs and 
+                epoch % args.pruning_interval == 0):
+                
+                if args.local_rank == 0:
+                    _logger.info(f'Applying pruning at epoch {epoch}')
+                
+                # Get current pruning ratio
+                current_pruning_ratio = pruning_scheduler(epoch)
+                pruner.pruning_ratio = current_pruning_ratio
+                
+                # Get a sample batch for spike map computation
+                sample_batch = next(iter(loader_train))
+                sample_input = sample_batch[0].cuda()
+                
+                # Compute channel scores
+                scores = pruner.compute_channel_scores(sample_input)
+                
+                # Select channels to prune
+                channels_to_prune = pruner.select_channels_to_prune(scores)
+                
+                # Apply pruning
+                pruned_model = pruner.apply_pruning(channels_to_prune)
+                
+                # Replace the model
+                model = pruned_model.cuda()
+                if args.distributed:
+                    if has_apex and use_amp != 'native':
+                        model = ApexDDP(model, delay_allreduce=True)
+                    else:
+                        model = NativeDDP(model, device_ids=[args.local_rank], find_unused_parameters=True)
+                
+                # Update optimizer for the new model
+                optimizer = create_optimizer_v2(model, **optimizer_kwargs(cfg=args))
+                
+                if args.local_rank == 0:
+                    _logger.info(f'Pruning applied with ratio {current_pruning_ratio:.3f}')
 
             train_metrics = train_one_epoch(
                 epoch, model, loader_train, optimizer, train_loss_fn, args,
