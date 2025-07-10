@@ -113,6 +113,10 @@ def main():
             loss.backward()
             optimizer.step()
             
+            # 重置神經元狀態
+            from spikingjelly.clock_driven import functional
+            functional.reset_net(model_instance)
+            
             running_loss += loss.item()
             
             if batch_idx % 100 == 0:
@@ -130,9 +134,13 @@ def main():
             current_pruning_ratio = pruning_scheduler(epoch)
             pruner.pruning_ratio = current_pruning_ratio
             
-            # 獲取樣本輸入
+            # 獲取樣本輸入並重置神經元狀態
             sample_batch = next(iter(trainloader))
             sample_input = sample_batch[0].to(device)
+            
+            # 重置神經元狀態
+            from spikingjelly.clock_driven import functional
+            functional.reset_net(model_instance)
             
             # 計算 channel 分數
             scores = pruner.compute_channel_scores(sample_input)

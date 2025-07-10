@@ -57,6 +57,10 @@ class SpikeMapPruner:
         """
         self.register_hooks()
         
+        # 重置神經元狀態
+        from spikingjelly.clock_driven import functional
+        functional.reset_net(self.model)
+        
         # 前向傳播以捕獲 spike maps
         with torch.no_grad():
             self.model(sample_input)
