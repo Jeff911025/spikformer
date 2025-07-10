@@ -165,11 +165,11 @@ def main():
             if args.prune_type == 'masking':
                 pruned_model = pruner.apply_pruning(channels_to_prune)
             else:
-                # structural pruning: 先轉成保留 channel 索引
+                # structural pruning: 正確產生 keep_indices_dict
                 keep_indices_dict = {}
                 for k, v in channels_to_prune.items():
-                    total = len(v) + len([i for i in range(10000) if i not in v])  # 粗略估計
-                    keep_indices = [i for i in range(total) if i not in v]
+                    num_channels = len(scores[k])
+                    keep_indices = [i for i in range(num_channels) if i not in v]
                     keep_indices_dict[k] = keep_indices
                 pruned_model = pruner.structural_prune_and_rebuild(keep_indices_dict)
             pruned_model = pruned_model.to(device)

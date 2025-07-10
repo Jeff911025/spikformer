@@ -294,8 +294,8 @@ def post_training_pruning(model, train_loader, args, device):
     else:
         keep_indices_dict = {}
         for k, v in channels_to_prune.items():
-            total = len(v) + len([i for i in range(10000) if i not in v])  # 粗略估計
-            keep_indices = [i for i in range(total) if i not in v]
+            num_channels = len(scores[k])
+            keep_indices = [i for i in range(num_channels) if i not in v]
             keep_indices_dict[k] = keep_indices
         pruned_model = pruner.structural_prune_and_rebuild(keep_indices_dict)
     pruned_model = pruned_model.to(device)
