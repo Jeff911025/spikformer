@@ -77,6 +77,8 @@ def main():
                        help='Batch size (default: 32)')
     parser.add_argument('--lr', type=float, default=0.01, 
                        help='Learning rate (default: 0.01)')
+    parser.add_argument('--prune-type', type=str, default='masking', choices=['masking', 'structural'],
+                       help='剪枝方式：masking（unstructured baseline）或 structural（論文主結果）')
     args = parser.parse_args()
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -160,18 +162,23 @@ def main():
             channels_to_prune = pruner.select_channels_to_prune(scores)
             
             # 應用 pruning
-            pruned_model = pruner.apply_pruning(channels_to_prune)
+            if args.prune_type == 'masking':
+                pruned_model = pruner.apply_pruning(channels_to_prune)
+            else:
+                # structural pruning: 先轉成保留 channel 索引
+                keep_indices_dict = {}
+                for k, v in channels_to_prune.items():
+                    total = len(v) + len([i for i in range(10000) if i not in v])  # 粗略估計
+                    keep_indices = [i for i in range(total) if i not in v]
+                    keep_indices_dict[k] = keep_indices
+                pruned_model = pruner.structural_prune_and_rebuild(keep_indices_dict)
             pruned_model = pruned_model.to(device)
-            
             # 替換模型
             model_instance = pruned_model
-            
             # 重新創建優化器
             optimizer = torch.optim.SGD(model_instance.parameters(), lr=args.lr, momentum=0.9)
-            
-            print(f'Pruning applied with ratio {current_pruning_ratio:.3f}')
+            print(f'Pruning applied with ratio {current_pruning_ratio:.3f} ({args.prune_type})')
             print(f'Pruned model parameters: {sum(p.numel() for p in model_instance.parameters())}')
-            
             # 評估 pruning 後的模型
             pruned_accuracy = evaluate_model(model_instance, testloader, device)
             print(f'Pruned model accuracy: {pruned_accuracy:.4f}')

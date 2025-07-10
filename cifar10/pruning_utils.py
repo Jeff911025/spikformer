@@ -121,21 +121,15 @@ class SpikeMapPruner:
         return pruned_model
     
     def _prune_ssa_module(self, module: SSA, channels_to_prune: Dict[str, List[int]], module_name: str):
-        """Prune SSA 模組的特定 channels"""
-        # 獲取要 pruning 的 channel 索引
+        """Prune SSA 模組的特定 channels (masking baseline)"""
         prune_key = f"ssa_{module_name}"
         if prune_key not in channels_to_prune:
             return
-        
         prune_indices = channels_to_prune[prune_key]
         if not prune_indices:
             return
-        
-        # 創建 mask 來標記要保留的 channels
         dim = module.dim
         keep_indices = [i for i in range(dim) if i not in prune_indices]
-        
-        # Prune Q, K, V 線性層
         if hasattr(module, 'q_linear'):
             module.q_linear = self._prune_linear_layer(module.q_linear, keep_indices, dim)
         if hasattr(module, 'k_linear'):
@@ -144,35 +138,27 @@ class SpikeMapPruner:
             module.v_linear = self._prune_linear_layer(module.v_linear, keep_indices, dim)
         if hasattr(module, 'proj_linear'):
             module.proj_linear = self._prune_linear_layer(module.proj_linear, keep_indices, dim)
-        
-        # 更新模組的維度
-        module.dim = len(keep_indices)
-        module.num_heads = min(module.num_heads, module.dim // (module.dim // module.num_heads))
-    
+        # masking baseline 不要動結構參數
+        # module.dim = len(keep_indices)
+        # module.num_heads = min(module.num_heads, module.dim // (module.dim // module.num_heads))
+
     def _prune_mlp_module(self, module: MLP, channels_to_prune: Dict[str, List[int]], module_name: str):
-        """Prune MLP 模組的特定 channels"""
-        # 獲取要 pruning 的 channel 索引
+        """Prune MLP 模組的特定 channels (masking baseline)"""
         prune_key = f"mlp_{module_name}"
         if prune_key not in channels_to_prune:
             return
-        
         prune_indices = channels_to_prune[prune_key]
         if not prune_indices:
             return
-        
-        # 創建 mask 來標記要保留的 channels
         in_features = module.c_output
         keep_indices = [i for i in range(in_features) if i not in prune_indices]
-        
-        # Prune MLP 的線性層
         if hasattr(module, 'fc1_linear'):
             module.fc1_linear = self._prune_linear_layer(module.fc1_linear, keep_indices, in_features)
         if hasattr(module, 'fc2_linear'):
             module.fc2_linear = self._prune_linear_layer(module.fc2_linear, keep_indices, in_features)
-        
-        # 更新模組的維度
-        module.c_hidden = len(keep_indices)
-        module.c_output = len(keep_indices)
+        # masking baseline 不要動結構參數
+        # module.c_hidden = len(keep_indices)
+        # module.c_output = len(keep_indices)
     
     def _prune_linear_layer(self, linear_layer: nn.Linear, keep_indices: List[int], original_dim: int) -> nn.Linear:
         # Masking: 將要砍掉的 channel 權重設為 0
@@ -236,6 +222,42 @@ class SpikeMapPruner:
                 correct += (predicted == targets).sum().item()
         
         return correct / total
+
+    def structural_prune_and_rebuild(self, keep_indices_dict: Dict[str, List[int]]) -> nn.Module:
+        """
+        根據 keep_indices_dict（每個 module 要保留的 channel 索引）重建一個新的模型
+        只支援 Linear/MLP block 的結構化 pruning demo
+        """
+        # 深拷貝模型，避免污染原始模型
+        new_model = copy.deepcopy(self.model)
+        # 遞迴重建所有 MLP/SSA block
+        for name, module in new_model.named_modules():
+            # MLP block
+            if isinstance(module, MLP):
+                prune_key = f"mlp_{name}"
+                if prune_key in keep_indices_dict:
+                    keep_indices = keep_indices_dict[prune_key]
+                    # 重建 fc1_linear
+                    old_fc1 = module.fc1_linear
+                    new_fc1 = nn.Linear(old_fc1.in_features, len(keep_indices), bias=old_fc1.bias is not None).to(old_fc1.weight.device)
+                    with torch.no_grad():
+                        new_fc1.weight.copy_(old_fc1.weight[keep_indices, :])
+                        if old_fc1.bias is not None:
+                            new_fc1.bias.copy_(old_fc1.bias[keep_indices])
+                    module.fc1_linear = new_fc1
+                    # 重建 fc2_linear
+                    old_fc2 = module.fc2_linear
+                    new_fc2 = nn.Linear(len(keep_indices), old_fc2.out_features, bias=old_fc2.bias is not None).to(old_fc2.weight.device)
+                    with torch.no_grad():
+                        new_fc2.weight.copy_(old_fc2.weight[:, keep_indices])
+                        if old_fc2.bias is not None:
+                            new_fc2.bias.copy_(old_fc2.bias)
+                    module.fc2_linear = new_fc2
+                    # 更新 c_hidden
+                    module.c_hidden = len(keep_indices)
+            # SSA block（可依需求擴充）
+            # ... 你可以仿照 MLP 實作 SSA ...
+        return new_model
 
 
 def create_pruning_scheduler(initial_ratio: float = 0.1, final_ratio: float = 0.5, 

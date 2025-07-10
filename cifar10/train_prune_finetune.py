@@ -119,6 +119,8 @@ parser.add_argument('--pruning-ratio', type=float, default=0.3, metavar='RATIO',
                     help='Pruning ratio (default: 0.3)')
 parser.add_argument('--pruning-samples', type=int, default=100, metavar='N',
                     help='Number of samples to use for pruning evaluation (default: 100)')
+parser.add_argument('--prune-type', type=str, default='masking', choices=['masking', 'structural'],
+                    help='剪枝方式：masking（unstructured baseline）或 structural（論文主結果）')
 
 # Output parameters
 parser.add_argument('--output-dir', default='./output/train_prune_finetune', type=str,
@@ -286,8 +288,16 @@ def post_training_pruning(model, train_loader, args, device):
     channels_to_prune = pruner.select_channels_to_prune(scores)
     
     # 應用 pruning
-    _logger.info("Applying pruning...")
-    pruned_model = pruner.apply_pruning(channels_to_prune)
+    _logger.info(f"Applying {args.prune_type} pruning...")
+    if args.prune_type == 'masking':
+        pruned_model = pruner.apply_pruning(channels_to_prune)
+    else:
+        keep_indices_dict = {}
+        for k, v in channels_to_prune.items():
+            total = len(v) + len([i for i in range(10000) if i not in v])  # 粗略估計
+            keep_indices = [i for i in range(total) if i not in v]
+            keep_indices_dict[k] = keep_indices
+        pruned_model = pruner.structural_prune_and_rebuild(keep_indices_dict)
     pruned_model = pruned_model.to(device)
     
     # 計算參數減少
