@@ -97,7 +97,7 @@ parser.add_argument('--patch-size', type=int, default=None, metavar='N',
 parser.add_argument('--mlp-ratio', type=int, default=None, metavar='N',
                     help='expand ration of embedding dimension in MLP block')
 # Dataset / Model parameters
-parser.add_argument('-data-dir', metavar='DIR',default="/home/zhou/Compact-Transformers-main/cifar-10-python/",
+parser.add_argument('-data-dir', metavar='DIR',default="/root/data/nas07/PersonalData/Jeff0102030433/CIFAR10/",
                     help='path to dataset')
 parser.add_argument('--dataset', '-d', metavar='NAME', default='torch/cifar10',
                     help='dataset type (default: ImageFolder/ImageTar if empty)')
@@ -303,14 +303,27 @@ parser.add_argument('--eval-metric', default='top1', type=str, metavar='EVAL_MET
                     help='Best metric (default: "top1"')
 parser.add_argument('--tta', type=int, default=0, metavar='N',
                     help='Test/inference time augmentation (oversampling) factor. 0=None (default: 0)')
-parser.add_argument("--local_rank", default=0, type=int)
+# parser.add_argument("--local_rank", default=0, type=int)
+parser.add_argument('--local_rank', type=int, default=os.getenv('LOCAL_RANK', 0))
+
 parser.add_argument('--use-multi-epochs-loader', action='store_true', default=False,
                     help='use the multi-epochs-loader to save time at the beginning of every epoch')
 parser.add_argument('--torchscript', dest='torchscript', action='store_true',
                     help='convert model torchscript for inference')
 parser.add_argument('--log-wandb', action='store_true', default=False,
                     help='log training and validation metrics to wandb')
-
+parser.add_argument('--svd', action='store_true', help='Enable SVD pruning on Linear layers before training')
+parser.add_argument(
+     '--prune',
+     action='store_true',
+     help='Prune attention heads and save a new checkpoint, then exit'
+  )
+parser.add_argument(
+      '--prune-ratio',
+      type=float,
+      default=0.5,
+      help='Fraction of heads to keep per attention layer (0–1)'
+  )
 
 def _parse_args():
     # Do we have a config file to parse?
@@ -344,9 +357,12 @@ def main():
     args.distributed = False
     if 'WORLD_SIZE' in os.environ:
         args.distributed = int(os.environ['WORLD_SIZE']) > 1
-    args.device = 'cuda:1'
+    args.device = f'cuda:1'
     args.world_size = 1
     args.rank = 0  # global rank
+    # args.device = f'cuda:{args.local_rank}'
+    # args.world_size = int(os.environ.get("WORLD_SIZE", 1))
+    # args.rank = int(os.environ.get("RANK", 0))
     if args.distributed:
         args.device = 'cuda:%d' % args.local_rank
         torch.cuda.set_device(args.local_rank)
@@ -358,6 +374,46 @@ def main():
     else:
         _logger.info('Training with a single process on 1 GPUs.')
     assert args.rank >= 0
+# def main():
+#     setup_default_logging()
+#     args, args_text = _parse_args()
+
+#     if args.log_wandb:
+#         if has_wandb:
+#             wandb.init(project=args.experiment, config=args)
+#         else:
+#             _logger.warning("You've requested to log metrics to wandb but package not found. "
+#                             "Metrics not being logged to wandb, try `pip install wandb`")
+
+#     args.prefetcher = not args.no_prefetcher
+
+#     # 自動偵測是否為分布式
+#     args.distributed = 'WORLD_SIZE' in os.environ and int(os.environ['WORLD_SIZE']) > 1
+
+#     # 自動選擇 GPU 裝置
+#     if torch.cuda.is_available():
+#         num_gpus = torch.cuda.device_count()
+#         args.device = 'cuda'
+#         _logger.info(f"✅ CUDA available. Using {num_gpus} GPU(s).")
+#     else:
+#         args.device = 'cpu'
+#         num_gpus = 0
+#         _logger.warning("❌ No CUDA device found. Using CPU.")
+
+#     args.world_size = 1
+#     args.rank = 0
+
+#     if args.distributed:
+#         args.device = f'cuda:{args.local_rank}'
+#         torch.cuda.set_device(args.local_rank)
+#         torch.distributed.init_process_group(backend='nccl', init_method='env://')
+#         args.world_size = torch.distributed.get_world_size()
+#         args.rank = torch.distributed.get_rank()
+#         _logger.info(f'Distributed mode enabled. Process {args.rank}/{args.world_size}')
+#     else:
+#         _logger.info(f'Single process training with {num_gpus} GPU(s)')
+
+#     assert args.rank >= 0
 
     # resolve AMP arguments based on PyTorch / Apex availability
     use_amp = None
@@ -389,6 +445,7 @@ def main():
         T=args.time_step
     )
     print("Creating model")
+
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"number of params: {n_parameters}")
 
@@ -463,6 +520,37 @@ def main():
             optimizer=None if args.no_resume_opt else optimizer,
             loss_scaler=None if args.no_resume_opt else loss_scaler,
             log_info=args.local_rank == 0)
+
+    # 如果指定了 --svd，就在加载完权重之后再做剪枝
+    if args.svd:
+        from model_svd import apply_svd_to_model
+        if args.local_rank == 0:
+            print("▶️ Applying SVD pruning to model (rank_ratio=0.25)...")
+        apply_svd_to_model(model, rank_ratio=0.25)
+        model.cuda()
+
+    # 是否要prune
+    if args.prune:
+        from prune_heads import prune_spikformer_heads
+        # this should return a dict mapping layer names → kept-head indices
+        keep_map = prune_spikformer_heads(model, ratio=args.prune_ratio)
+        if args.local_rank == 0:
+            print(f"▶️  Pruned heads map:\n{keep_map}")
+            out_path = args.output or './pruned_spikformer.pth.tar'
+            torch.save({
+               'state_dict': model.state_dict(),
+               'keep_heads': keep_map
+            }, out_path)
+            print(f"✔️  Saved pruned checkpoint to {out_path}")
+        return
+
+
+
+
+
+
+
+
 
     # setup exponential moving average of model weights, SWA could be used here too
     model_ema = None
