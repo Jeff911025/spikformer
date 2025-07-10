@@ -140,7 +140,7 @@ def main():
             print(f'Epoch {epoch+1}, Loss: {running_loss/len(trainloader):.4f}')
         
         # 應用 pruning（在特定 epoch）
-        if epoch == 0 or (epoch >= 1 and epoch % 2 == 0):  # 第1個epoch就prune，之後每2個epoch再prune一次
+        if epoch == 8:
             print(f'Applying pruning at epoch {epoch+1}')
             # 直接用 args.pruning_ratio
             current_pruning_ratio = args.pruning_ratio
