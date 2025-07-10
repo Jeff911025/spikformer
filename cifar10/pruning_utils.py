@@ -31,14 +31,13 @@ class SpikeMapPruner:
             def hook(module, input, output):
                 # 捕獲 spike map (T, B, N, C)
                 if isinstance(output, torch.Tensor) and len(output.shape) == 4:
-                    # 壓縮 T 維度，計算每個 channel 的活躍度
-                    spike_map = output.detach()
-                    # 計算每個 channel 的平均 spike 頻率
-                    channel_activity = torch.mean(spike_map, dim=(0, 1, 2))  # (C,)
-                    self.spike_maps[name] = channel_activity
+                    spike_map = output.detach()  # (T, B, N, C)
+                    # 先對 T 維做 mean，保留 (B, N, C)
+                    spike_map_bnc = spike_map.mean(dim=0)  # (B, N, C)
+                    self.spike_maps[name] = spike_map_bnc
             return hook
         
-        # 為 SSA 模組註冊 hooks
+        # 為 SSA/MLP 模組註冊 hooks
         for name, module in self.model.named_modules():
             if isinstance(module, SSA):
                 module.register_forward_hook(get_spike_hook(f"ssa_{name}"))
