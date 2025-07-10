@@ -175,23 +175,20 @@ class SpikeMapPruner:
         module.c_output = len(keep_indices)
     
     def _prune_linear_layer(self, linear_layer: nn.Linear, keep_indices: List[int], original_dim: int) -> nn.Linear:
-        """Prune 線性層的特定 channels"""
-        if linear_layer.in_features == original_dim:
-            # Prune input features
-            new_layer = nn.Linear(len(keep_indices), linear_layer.out_features, bias=linear_layer.bias is not None)
-            new_layer.weight.data = linear_layer.weight.data[:, keep_indices]
-            if linear_layer.bias is not None:
-                new_layer.bias.data = linear_layer.bias.data
-            return new_layer
-        elif linear_layer.out_features == original_dim:
-            # Prune output features
-            new_layer = nn.Linear(linear_layer.in_features, len(keep_indices), bias=linear_layer.bias is not None)
-            new_layer.weight.data = linear_layer.weight.data[keep_indices, :]
-            if linear_layer.bias is not None:
-                new_layer.bias.data = linear_layer.bias.data[keep_indices]
-            return new_layer
-        else:
-            return linear_layer
+        # Masking: 將要砍掉的 channel 權重設為 0
+        device = linear_layer.weight.device
+        mask = torch.ones(original_dim, dtype=torch.bool, device=device)
+        mask[keep_indices] = False  # mask=True 代表要砍掉
+        with torch.no_grad():
+            # 如果是 input features pruning
+            if linear_layer.in_features == original_dim:
+                linear_layer.weight.data[:, mask] = 0
+            # 如果是 output features pruning
+            elif linear_layer.out_features == original_dim:
+                linear_layer.weight.data[mask, :] = 0
+                if linear_layer.bias is not None:
+                    linear_layer.bias.data[mask] = 0
+        return linear_layer
     
     def evaluate_pruning_impact(self, original_model: nn.Module, pruned_model: nn.Module, 
                                test_loader, device: torch.device) -> Dict[str, float]:

@@ -138,7 +138,7 @@ def main():
             print(f'Epoch {epoch+1}, Loss: {running_loss/len(trainloader):.4f}')
         
         # 應用 pruning（在特定 epoch）
-        if epoch >= 3 and epoch % 2 == 0:  # 從第3個epoch開始，每2個epoch進行一次pruning
+        if epoch == 0 or (epoch >= 1 and epoch % 2 == 0):  # 第1個epoch就prune，之後每2個epoch再prune一次
             print(f'Applying pruning at epoch {epoch+1}')
             
             # 獲取當前 pruning 比例
