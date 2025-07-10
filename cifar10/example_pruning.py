@@ -32,12 +32,12 @@ def create_cifar10_dataloader(batch_size=32, num_workers=4):
     trainset = torchvision.datasets.CIFAR10(
         root='/root/data/nas07/PersonalData/Jeff0102030433/CIFAR10/', train=True, download=False, transform=transform_train)
     trainloader = DataLoader(
-        trainset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+        trainset, batch_size=batch_size, shuffle=True, num_workers=num_workers, drop_last=True)
     
     testset = torchvision.datasets.CIFAR10(
         root='/root/data/nas07/PersonalData/Jeff0102030433/CIFAR10/', train=False, download=False, transform=transform_test)
     testloader = DataLoader(
-        testset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+        testset, batch_size=batch_size, shuffle=False, num_workers=num_workers, drop_last=True)
     
     return trainloader, testloader
 
@@ -48,12 +48,15 @@ def evaluate_model(model, testloader, device):
     correct = 0
     total = 0
     
+    # 在評估開始前重置神經元狀態
+    from spikingjelly.clock_driven import functional
+    functional.reset_net(model)
+    
     with torch.no_grad():
         for inputs, targets in testloader:
             inputs, targets = inputs.to(device), targets.to(device)
             
-            # 重置神經元狀態
-            from spikingjelly.clock_driven import functional
+            # 每個 batch 前也重置神經元狀態
             functional.reset_net(model)
             
             outputs = model(inputs)

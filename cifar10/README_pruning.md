@@ -19,55 +19,56 @@ Pruning 機制通過分析神經元的 spike map 輸出，計算每個 channel �
 
 - **create_pruning_scheduler()**: 創建 pruning 比例調度器
 
-### 2. 修改後的 `train.py`
-整合了 pruning 機制到訓練流程中：
+### 2. `train_prune_finetune.py`（推薦完整流程腳本）
 
+#### 支援的功能：
+- **全流程**（預設）：訓練 → pruning → finetune
+- **只做 pruning**：直接載入訓練好模型，進行 pruning
+- **只做 finetune**：直接載入 pruning 後模型，finetune
+- **只做 evaluate**：可分別評估 unpruned/pruned/finetuned 模型
+
+#### Workflow 控制參數：
+- `--do-train`：是否執行訓練（預設True）
+- `--do-prune`：是否執行 pruning（預設True）
+- `--do-finetune`：是否執行 finetune（預設True）
+- `--load-unpruned`：直接載入訓練好模型（跳過訓練）
+- `--load-pruned`：直接載入 pruning 後模型（跳過訓練和 pruning）
+- `--eval-unpruned`：只評估訓練好（未 prune）模型
+- `--eval-pruned`：只評估 pruning 後模型
+- `--eval-finetuned`：只評估 finetuned 模型
+
+#### 使用範例：
+
+**全流程（預設）**
+```bash
+python train_prune_finetune.py
+```
+
+**只做 pruning**
+```bash
+python train_prune_finetune.py --do-train False --do-prune True --do-finetune False --load-unpruned ./output/train_prune_finetune/xxx/model_best.pth
+```
+
+**只做 finetune**
+```bash
+python train_prune_finetune.py --do-train False --do-prune False --do-finetune True --load-pruned ./output/train_prune_finetune/xxx/model_pruned.pth
+```
+
+**只做評估**
+```bash
+python train_prune_finetune.py --eval-unpruned --load-unpruned ./output/train_prune_finetune/xxx/model_best.pth
+python train_prune_finetune.py --eval-pruned --load-pruned ./output/train_prune_finetune/xxx/model_pruned.pth
+python train_prune_finetune.py --eval-finetuned
+```
+
+### 3. `example_pruning.py`
+提供了一個簡單的訓練+pruning示例腳本，適合快速測試。
+
+### 4. 修改後的 `train.py`
+整合了 pruning 機制到訓練流程中：
 - 新增了 pruning 相關的命令行參數
 - 在訓練循環中定期應用 pruning
 - 自動更新模型和優化器
-
-### 3. `example_pruning.py`
-提供了一個完整的示例腳本來展示如何使用 pruning 機制。
-
-## 使用方法
-
-### 方法 1: 使用修改後的訓練腳本
-
-```bash
-# 啟用 pruning 的訓練
-python train.py --enable-pruning --pruning-ratio 0.3 --pruning-epochs 50 --pruning-interval 10
-
-# 其他參數
-python train.py \
-    --enable-pruning \
-    --pruning-ratio 0.3 \
-    --pruning-epochs 50 \
-    --pruning-interval 10 \
-    --epochs 200 \
-    --batch-size 32 \
-    --lr 0.01
-```
-
-### 方法 2: 使用示例腳本
-
-```bash
-# 基本使用
-python example_pruning.py
-
-# 自定義參數
-python example_pruning.py \
-    --pruning-ratio 0.3 \
-    --epochs 10 \
-    --batch-size 32 \
-    --lr 0.01
-```
-
-## Pruning 參數說明
-
-- `--enable-pruning`: 啟用 pruning 機制
-- `--pruning-ratio`: pruning 比例 (0-1)，預設 0.3
-- `--pruning-epochs`: 開始 pruning 的 epoch，預設 50
-- `--pruning-interval`: pruning 評估間隔，預設 10
 
 ## Pruning 流程
 
@@ -83,24 +84,12 @@ python example_pruning.py \
 - **平均 Spike 頻率**: 計算每個 channel 在時間和空間維度上的平均 spike 頻率
 - **低分數優先**: 選擇 spike 頻率最低的 channels 進行 pruning
 
-可以擴展的分數計算方法：
-- **變異數**: 計算 spike 頻率的變異數
-- **熵**: 計算 spike 模式的熵
-- **相關性**: 計算 channels 之間的相關性
-
 ## 注意事項
 
 1. **模型兼容性**: 目前支援 SSA 和 MLP 模組的 pruning
 2. **維度匹配**: Pruning 後需要確保相鄰層的維度匹配
 3. **性能影響**: Pruning 可能會影響模型性能，需要根據具體任務調整 pruning 比例
 4. **漸進式 Pruning**: 建議使用漸進式 pruning 而不是一次性大量 pruning
-
-## 擴展建議
-
-1. **更多分數指標**: 實現更多樣化的 channel 重要性評估方法
-2. **結構化 Pruning**: 支援 head-wise 或 layer-wise 的結構化 pruning
-3. **動態調整**: 根據訓練進度動態調整 pruning 策略
-4. **恢復機制**: 實現被 pruning 的 channels 的恢復機制
 
 ## 故障排除
 
