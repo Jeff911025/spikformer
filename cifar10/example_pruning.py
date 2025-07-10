@@ -51,6 +51,11 @@ def evaluate_model(model, testloader, device):
     with torch.no_grad():
         for inputs, targets in testloader:
             inputs, targets = inputs.to(device), targets.to(device)
+            
+            # 重置神經元狀態
+            from spikingjelly.clock_driven import functional
+            functional.reset_net(model)
+            
             outputs = model(inputs)
             _, predicted = torch.max(outputs.data, 1)
             total += targets.size(0)
@@ -122,9 +127,12 @@ def main():
             if batch_idx % 100 == 0:
                 print(f'Epoch {epoch+1}, Batch {batch_idx}, Loss: {loss.item():.4f}')
         
-        # 評估當前模型
-        accuracy = evaluate_model(model_instance, testloader, device)
-        print(f'Epoch {epoch+1}, Accuracy: {accuracy:.4f}, Loss: {running_loss/len(trainloader):.4f}')
+        # 評估當前模型（只在特定 epoch 進行評估以節省時間）
+        if epoch % 2 == 0 or epoch == 0:  # 每2個epoch評估一次，或第一個epoch
+            accuracy = evaluate_model(model_instance, testloader, device)
+            print(f'Epoch {epoch+1}, Accuracy: {accuracy:.4f}, Loss: {running_loss/len(trainloader):.4f}')
+        else:
+            print(f'Epoch {epoch+1}, Loss: {running_loss/len(trainloader):.4f}')
         
         # 應用 pruning（在特定 epoch）
         if epoch >= 3 and epoch % 2 == 0:  # 從第3個epoch開始，每2個epoch進行一次pruning
